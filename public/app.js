@@ -78,7 +78,7 @@ sb.auth.onAuthStateChange((event, session) => {
   const u = session?.user || null;
   if(recovering) return;
   if(u && (!user || u.id!==user.id)){ user=u; $("#topbar").hidden=false; loadAll(); }
-  else if(!u){ user=null; entries=[]; meds=[]; files=[]; showSignIn(); }
+  else if(!u){ user=null; entries=[]; meds=[]; files=[]; reports=null; currentReport=null; showSignIn(); }
 });
 sb.auth.getSession().then(({data}) => { if(!data.session && !recovering) showSignIn(); });
 
@@ -147,7 +147,7 @@ function render(){
   document.querySelectorAll(".tabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab===tab)));
   $("#newBtn").textContent = tab==="meds" ? "+ Add medication" : "+ New entry";
   const m = $("#main");
-  m.innerHTML = tab==="visits" ? viewVisits() : tab==="meds" ? viewMeds() : tab==="providers" ? viewProviders() : viewBackup();
+  m.innerHTML = tab==="visits" ? viewVisits() : tab==="meds" ? viewMeds() : tab==="providers" ? viewProviders() : tab==="insights" ? viewInsights() : viewBackup();
   wire();
 }
 const filesFor = eid => files.filter(f=>f.entryId===eid);
@@ -254,6 +254,105 @@ function wire(){
   const ex=$("#exp"); if(ex) ex.onclick=exportZip;
   const imp=$("#importFile"); if(imp) imp.onchange=()=>imp.files[0]&&importBackup(imp.files[0]);
   const so=$("#signout"); if(so) so.onclick=()=>sb.auth.signOut();
+  if(tab==="insights") wireInsights();
+}
+
+/* ---------- Insights (analysis reports) ---------- */
+let reports=null, reportsLoading=false, currentReport=null, running=false, runStatus="", runRange="12m", runFocus="";
+const RANGE_OPTS=[["12m","Last 12 months"],["3y","Last 3 years"],["all","All records"]];
+const fmtDT = s => s ? new Date(s).toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"}) : "";
+
+async function loadReports(){
+  if(reportsLoading) return; reportsLoading=true;
+  const {data,error}=await sb.from("reports").select("*").order("created_at",{ascending:false}).limit(50);
+  reportsLoading=false;
+  if(error){ reports=[]; if(/does not exist/.test(error.message)) runStatus="Reports need the updated database setup. Run supabase/schema.sql again (see README)."; }
+  else { reports=data; if(!currentReport && data.length) currentReport=data[0]; }
+  if(tab==="insights") render();
+}
+
+function viewInsights(){
+  if(reports===null){ loadReports(); }
+  const head=`<div class="section-head"><div><h2>Insights</h2><p>Claude reviews your visits, medications, and notes and points out patterns, follow-ups, costs, and questions worth asking.</p></div></div>`;
+  const form=`<div class="panel run">
+    <div class="grid2">
+      <div class="f"><label for="r-range">Look at</label><select id="r-range">${RANGE_OPTS.map(([v,l])=>`<option value="${v}" ${v===runRange?"selected":""}>${l}</option>`).join("")}</select></div>
+      <div class="f"><label for="r-focus">Anything specific? <span class="hint">Optional</span></label><input id="r-focus" maxlength="300" value="${esc(runFocus)}" placeholder="My knee, dental costs, blood pressure…"></div>
+    </div>
+    <div class="row" style="margin-top:12px"><button class="btn primary" id="r-run" type="button" ${running?"disabled":""}>${running?"Analyzing…":"Run analysis"}</button><span class="progress" id="r-status">${esc(runStatus)}</span></div>
+  </div>`;
+  const history = reports&&reports.length>1 ? `<div class="sub">Earlier reports</div><div class="list">${reports.map(r=>`<button class="med hist" type="button" data-report="${r.id}" ${currentReport&&currentReport.id===r.id?'aria-current="true"':""}>
+      <div style="min-width:0"><div class="n" style="font-size:14px">${esc(r.result?.headline||"Report")}</div><div class="meta">${esc(fmtDT(r.created_at))} · ${esc(r.range_label)}${r.focus?` · “${esc(r.focus)}”`:""}</div></div><span class="state off">View</span></button>`).join("")}</div>` : "";
+  const body = currentReport ? renderReport(currentReport)
+    : reports===null ? `<div class="notice">Loading your reports…</div>`
+    : `<div class="empty"><h3>No reports yet</h3><p>Pick a time period and run your first analysis. It usually takes under a minute, and the report is saved here so you can come back to it.</p></div>`;
+  return head+form+body+history;
+}
+
+function renderReport(rep){
+  const r=rep.result||{}, st=rep.stats||{};
+  const list=(arr,fn)=>Array.isArray(arr)&&arr.length?arr.map(fn).join(""):"";
+  const item=x=>`<li><b>${esc(x.title)}</b>${x.when?` <span class="when">${esc(x.when)}</span>`:""}<div>${esc(x.detail)}</div></li>`;
+  const section=(title,inner)=>inner?`<section class="rsec"><h3>${title}</h3>${inner}</section>`:"";
+  const maxCost=Math.max(1,...(st.byType||[]).map(t=>t.cost||0));
+  const bars=(st.byType||[]).filter(t=>t.visits).map(t=>`<div class="rbar"><span>${esc(t.type)}</span><div class="track"><i style="width:${Math.round((t.cost||0)/maxCost*100)}%"></i></div><span class="mono">${money(t.cost)||"$0.00"}</span><span class="mono muted">${t.visits} visit${t.visits===1?"":"s"}</span></div>`).join("");
+  const flags=list(r.flags,f=>`<div class="flag ${["urgent","soon"].includes(f.level)?f.level:"note"}"><span class="lvl">${f.level==="urgent"?"Contact your doctor":f.level==="soon"?"Follow up soon":"Note"}</span><b>${esc(f.title)}</b><div>${esc(f.detail)}</div></div>`);
+  const qs=Array.isArray(r.questions)?r.questions:[];
+  return `<article class="report" id="report">
+    <div class="rhead"><div class="meta">${esc(fmtDT(rep.created_at))} · ${esc(rep.range_label||st.range||"")}${rep.focus?` · Focus: ${esc(rep.focus)}`:""}</div>
+      <h2>${esc(r.headline||"Your health binder report")}</h2>
+      <div class="row">${rep.id?`<button class="btn ghost" id="r-del" type="button">Delete report</button>`:""}</div></div>
+    <div class="summary" style="margin-bottom:18px">
+      <div><div class="k">Entries</div><div class="v">${st.entries??0}</div><div class="s">${st.providers??0} providers</div></div>
+      <div><div class="k">Out-of-pocket</div><div class="v">${money(st.totalCost)||"$0.00"}</div><div class="s">${esc(st.range||"")}</div></div>
+      <div><div class="k">Medications</div><div class="v">${st.activeMeds??0}</div><div class="s">${st.pastMeds??0} past</div></div>
+      <div><div class="k">Follow-ups</div><div class="v">${(st.overdueFollowUps||[]).length}</div><div class="s">overdue · ${(st.upcomingFollowUps||[]).length} upcoming</div></div>
+    </div>
+    ${flags?`<div class="flags">${flags}</div>`:""}
+    ${section("Overview", r.overview?`<p>${esc(r.overview)}</p>`:"")}
+    ${section("Patterns", list(r.patterns,item)&&`<ul>${list(r.patterns,item)}</ul>`)}
+    ${section("Medications", list(r.medications,item)&&`<ul>${list(r.medications,item)}</ul>`)}
+    ${section("Care &amp; follow-ups", list(r.care,item)&&`<ul>${list(r.care,item)}</ul>`)}
+    ${section("Spending", (r.spending?`<p>${esc(r.spending)}</p>`:"")+(bars?`<div class="rbars">${bars}</div>`:""))}
+    ${section("Questions for your next visit", qs.length?`<ol class="qs">${qs.map(q=>`<li>${esc(q)}</li>`).join("")}</ol><button class="btn" id="r-copy" type="button">Copy questions</button>`:"")}
+    ${section("To make your binder more useful", Array.isArray(r.gaps)&&r.gaps.length?`<ul class="plain">${r.gaps.map(g=>`<li>${esc(g)}</li>`).join("")}</ul>`:"")}
+    <p class="disclaimer">This report was written by Claude from the records in your binder. It can miss things or get things wrong, and it isn't medical advice. Talk with your doctor, dentist, or pharmacist before making any health decision. For an emergency, call 911.</p>
+    <div id="r-delconf"></div>
+  </article>`;
+}
+
+function wireInsights(){
+  const run=$("#r-run"); if(run) run.onclick=runAnalysis;
+  document.querySelectorAll("[data-report]").forEach(b=>b.onclick=()=>{ currentReport=reports.find(r=>r.id===b.dataset.report); render(); $("#report")?.scrollIntoView({behavior:"smooth",block:"start"}); });
+  const cp=$("#r-copy"); if(cp) cp.onclick=async()=>{
+    const qs=(currentReport.result?.questions||[]).map((q,i)=>`${i+1}. ${q}`).join("\n");
+    try{ await navigator.clipboard.writeText(qs); toast("Questions copied"); }catch{ const r=document.createRange(); r.selectNodeContents($(".qs")); getSelection().removeAllRanges(); getSelection().addRange(r); toast("Selected. Press Ctrl+C or Cmd+C to copy."); }
+  };
+  const del=$("#r-del"); if(del) del.onclick=()=>{
+    $("#r-delconf").innerHTML=`<div class="confirm"><span style="flex:1">Delete this report? Your records aren't affected.</span><button class="btn" id="rd-no" type="button">Keep it</button><button class="btn danger solid" id="rd-yes" type="button">Delete</button></div>`;
+    $("#rd-no").onclick=()=>$("#r-delconf").innerHTML="";
+    $("#rd-yes").onclick=async()=>{
+      const id=currentReport.id; const {error}=await sb.from("reports").delete().eq("id",id);
+      if(error){ toast("Couldn't delete. Try again."); return; }
+      reports=reports.filter(r=>r.id!==id); currentReport=reports[0]||null; toast("Report deleted"); render();
+    };
+  };
+}
+
+async function runAnalysis(){
+  if(running) return;
+  const range=runRange=$("#r-range").value, focus=runFocus=$("#r-focus").value.trim();
+  running=true; runStatus="Claude is reviewing your records. This usually takes under a minute."; render();
+  try{
+    const {data,error}=await sb.functions.invoke("analyze",{body:{range,focus,today:todayISO()}});
+    if(error){ let m=""; try{ m=(await error.context?.json())?.error; }catch{} throw new Error(m || (/not found|404/i.test(error.message)?"The analysis isn't set up yet. Deploy the analyze function (see README).":"Couldn't reach the analysis service. Try again.")); }
+    currentReport=data.report;
+    if(data.saved) reports=[data.report,...(reports||[])];
+    runStatus=data.saved?"":"The report couldn't be saved. Run supabase/schema.sql again to add the reports table.";
+  }catch(err){ runStatus=err.message||"Something went wrong. Try again."; }
+  running=false;
+  if(tab==="insights"){ render(); if(!runStatus) $("#report")?.scrollIntoView({behavior:"smooth",block:"start"}); }
+  else if(!runStatus) toast("Your Insights report is ready");
 }
 
 /* ---------- Sheets ---------- */
