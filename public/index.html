@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#1D6A65">
+<title>Health Binder</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231D6A65'/%3E%3Cpath d='M13 7h6v6h6v6h-6v6h-6v-6H7v-6h6z' fill='%23fff'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="top" id="topbar" hidden>
+  <div class="wrap">
+    <div class="top-row">
+      <div class="brand"><h1>Health Binder</h1><small>Your records, one place</small></div>
+      <div class="search">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="q" type="search" placeholder="Search notes, providers, diagnoses…" aria-label="Search records">
+      </div>
+      <button class="btn primary" id="newBtn" type="button">+ New entry</button>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="visits" aria-selected="true">Visits &amp; notes</button>
+      <button role="tab" data-tab="meds" aria-selected="false">Medications</button>
+      <button role="tab" data-tab="providers" aria-selected="false">Providers</button>
+      <button role="tab" data-tab="backup" aria-selected="false">Backup &amp; account</button>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap" id="main">
+  <div class="notice">Opening your binder…</div>
+</main>
+
+<div id="layer"></div>
+
+<script src="/config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
